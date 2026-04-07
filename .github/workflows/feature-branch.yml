@@ -68,7 +68,6 @@ jobs:
 
   affected:
     needs: [ test ]
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'deploy') }}
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
@@ -90,7 +89,7 @@ jobs:
         id: affected
         run: atmos describe affected --format=matrix --output-file=$GITHUB_OUTPUT
 
-  deploy:
+  plan:
     needs: [ affected, build ]
     if: ${{ needs.affected.outputs.matrix != '' }}
     runs-on: ["ubuntu-latest"]
@@ -98,6 +97,30 @@ jobs:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
     strategy:
       matrix: ${{ fromJson(needs.affected.outputs.matrix) }}
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Plan
+        env:
+          APP_IMAGE: "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          atmos terraform plan ${{ matrix.component }} -s ${{ matrix.stack }}
+
+  deploy:
+    needs: [ test, build ]
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'deploy') }}
+    runs-on: ["ubuntu-latest"]
+    container:
+      image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    strategy:
+      matrix:
+        component: [app, s3-bucket]
       fail-fast: false
     environment:
       name: preview
@@ -116,4 +139,4 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}
+          atmos terraform deploy ${{ matrix.component }} -s preview
