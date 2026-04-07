@@ -58,7 +58,6 @@ jobs:
         shell: bash
     outputs:
       matrix: ${{ steps.affected.outputs.matrix }}
-      has_affected: ${{ steps.affected.outputs.has_affected }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -71,7 +70,7 @@ jobs:
 
   deploy-staging:
     needs: [ affected-staging, promote ]
-    if: ${{ needs.affected-staging.outputs.has_affected == 'true' }}
+    if: ${{ needs.affected-staging.outputs.matrix != '' }}
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
@@ -106,7 +105,6 @@ jobs:
         shell: bash
     outputs:
       matrix: ${{ steps.affected.outputs.matrix }}
-      has_affected: ${{ steps.affected.outputs.has_affected }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -119,7 +117,7 @@ jobs:
 
   deploy-production:
     needs: [ affected-prod, promote ]
-    if: ${{ needs.affected-prod.outputs.has_affected == 'true' }}
+    if: ${{ needs.affected-prod.outputs.matrix != '' }}
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
