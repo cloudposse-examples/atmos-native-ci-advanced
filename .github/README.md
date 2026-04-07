@@ -9,7 +9,12 @@
 
 Example application deployed to AWS ECS using [Atmos](https://atmos.tools) and [OpenTofu](https://opentofu.org).
 
-This repository demonstrates an elegant, self-contained approach to deploying containerized applications on ECS Fargate with automated CI/CD pipelines.
+This repository demonstrates deploying a self-contained application and its S3 backing service to AWS, showcasing two component provisioning strategies side by side:
+
+- **`app` (ECS task)** - A local component checked into the repository under `terraform/components/ecs-task/`, managed directly in the codebase
+- **`s3-bucket`** - A remote component pinned to a GitHub source, provisioned just-in-time via [Atmos source provisioning](https://atmos.tools/core-concepts/components/source-provisioning) with workdir provisioning - no local Terraform code required
+
+CI/CD pipelines use [`atmos describe affected --format=matrix`](https://atmos.tools/cli/commands/describe/affected) to dynamically detect which components changed and dispatch parallel deploy jobs for each affected component+stack pair.
 
 
 ## Introduction
@@ -34,12 +39,14 @@ graph TB
         end
         ECR[ECR Registry]
         R53[Route 53]
+        S3[S3 Bucket]
     end
 
     Internet((Internet)) --> R53
     R53 --> ALB
     ALB --> ECS
     ECS --> EFS
+    ECS -.-> S3
     ECR -.-> ECS
 
     subgraph "Dependencies (Pre-existing)"
@@ -53,12 +60,52 @@ graph TB
     EFS_DEP -.->|efs_id| EFS
 ```
 
+### Component Provisioning
+
+This project demonstrates two ways to provision Terraform components with Atmos:
+
+```mermaid
+graph LR
+    subgraph "Local Component"
+        A[terraform/components/ecs-task/] --> B[app component]
+    end
+    subgraph "Source Provisioned Component"
+        C[github.com/cloudposse/terraform-aws-s3-bucket] --> D[JIT Fetch]
+        D --> E[Workdir Provisioned]
+        E --> F[s3-bucket component]
+    end
+```
+
+| Component | Provisioning | Source | Description |
+|-----------|-------------|--------|-------------|
+| `app` | Local | `terraform/components/ecs-task/` | ECS Fargate service - checked into the repo, managed directly |
+| `s3-bucket` | Remote (JIT) | `github.com/cloudposse/terraform-aws-s3-bucket` | S3 bucket - pinned to a remote module, fetched on demand |
+
+The `s3-bucket` component uses [source provisioning](https://atmos.tools/core-concepts/components/source-provisioning) to fetch the Terraform module from GitHub at plan/apply time and [workdir provisioning](https://atmos.tools/core-concepts/components/source-provisioning) to manage the working directory. This means there is no local Terraform code for S3 - the configuration lives entirely in the stack YAML:
+
+```yaml
+# terraform/stacks/defaults/s3-bucket.yaml
+components:
+  terraform:
+    s3-bucket:
+      source:
+        uri: "github.com/cloudposse/terraform-aws-s3-bucket//."
+        version: "main"
+      provision:
+        workdir:
+          enabled: true
+      vars:
+        name: demo
+        versioning_enabled: true
+```
+
 This project uses:
 
 - **[Atmos](https://atmos.tools)** - Configuration orchestration and stack management
 - **[OpenTofu](https://opentofu.org)** - Infrastructure as Code (Terraform-compatible)
 - **AWS ECS Fargate** - Serverless container orchestration
 - **AWS ECR** - Container image registry
+- **AWS S3** - Object storage (backing service)
 - **AWS EFS** - Persistent file storage (optional)
 
 
@@ -81,11 +128,13 @@ atmos down
 
 See [`.github/workflows/`](.github/workflows/) for detailed workflow diagrams.
 
+All deploy workflows use `atmos describe affected --format=matrix` to detect which components changed and deploy only what's needed, in parallel.
+
 | Workflow | Trigger | Action |
 |----------|---------|--------|
-| `main-branch.yaml` | Push to `main` | Build image → Deploy to dev → Create draft release |
-| `release.yaml` | Published release | Promote image → Deploy to staging and prod |
-| `feature-branch.yml` | PR with `deploy` label | Build image → Deploy to preview environment |
+| `main-branch.yaml` | Push to `main` | Build image → Detect affected → Deploy to dev → Create draft release |
+| `release.yaml` | Published release | Promote image → Detect affected → Deploy to staging and prod |
+| `feature-branch.yml` | PR with `deploy` label | Build image → Detect affected → Deploy to preview environment |
 | `preview-cleanup.yml` | PR closed | Destroy preview environment |
 
 ### Deployment
@@ -120,21 +169,24 @@ Replace the `!terraform.state` lookups in `terraform/stacks/defaults/app.yaml` w
 #### Local Deployment
 
 ```bash
-# Deploy to dev environment
+# Deploy all components to dev
 atmos terraform deploy app -s dev
+atmos terraform deploy s3-bucket -s dev
 
 # Deploy to staging
 atmos terraform deploy app -s staging
+atmos terraform deploy s3-bucket -s staging
 
 # Deploy to production
 atmos terraform deploy app -s prod
+atmos terraform deploy s3-bucket -s prod
 ```
 
 #### CI/CD Deployment
 
-1. Push to `main` branch → automatically deploys to dev
-2. Create a GitHub release → automatically deploys to staging and prod
-3. Open a PR with `deploy` label → deploys to a preview environment
+1. Push to `main` branch → automatically detects affected components and deploys to dev
+2. Create a GitHub release → automatically detects affected and deploys to staging then prod
+3. Open a PR with `deploy` label → detects affected and deploys to a preview environment
 
 ### Configuration
 
@@ -145,13 +197,14 @@ Stack configurations are in `terraform/stacks/`. Each environment imports shared
 import:
   - _default.yaml
   - defaults/app.yaml
+  - defaults/s3-bucket.yaml
   - deps/*
 
 vars:
   stage: dev
 ```
 
-Container configuration is defined in `terraform/stacks/defaults/app.yaml` and can be customized per environment.
+Container configuration is defined in `terraform/stacks/defaults/app.yaml` and S3 bucket configuration in `terraform/stacks/defaults/s3-bucket.yaml`. Both can be customized per environment.
 
 ### Repository Structure
 
@@ -166,20 +219,24 @@ Container configuration is defined in `terraform/stacks/defaults/app.yaml` and c
 ├── atmos.yaml                 # Atmos configuration
 ├── .atmos.d/                  # Atmos custom commands
 ├── terraform/
-│   ├── components/            # Terraform/OpenTofu modules
+│   ├── components/            # Local Terraform/OpenTofu modules
 │   │   └── ecs-task/          # ECS task definition component
 │   └── stacks/                # Environment configurations
-│       ├── defaults/          # Shared component config
+│       ├── defaults/
+│       │   ├── app.yaml       # ECS app config (local component)
+│       │   └── s3-bucket.yaml # S3 config (source-provisioned)
 │       ├── deps/              # Dependency references
 │       ├── dev.yaml
 │       ├── staging.yaml
 │       ├── prod.yaml
 │       └── preview.yaml
 └── .github/
-    ├── workflows/             # CI/CD pipelines
+    ├── workflows/             # CI/CD pipelines (affected + matrix)
     ├── README.yaml            # README source
     └── README.md              # Generated README
 ```
+
+> **Note:** The `s3-bucket` component has no directory under `terraform/components/` - it is source-provisioned from a remote GitHub module at plan/apply time.
 
 ### Building Documentation
 
@@ -188,9 +245,6 @@ To regenerate the README from this file, run:
 ```bash
 atmos docs generate readme
 ```
-
-
-
 
 
 

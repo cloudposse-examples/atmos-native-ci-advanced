@@ -1,0 +1,17 @@
+components:
+  terraform:
+    s3-bucket:
+      source:
+        uri: "github.com/cloudposse/terraform-aws-s3-bucket//."
+        version: "main"
+      provision:
+        workdir:
+          enabled: true
+      vars:
+        name: demo
+        acl: private
+        versioning_enabled: true
+        block_public_acls: true
+        block_public_policy: true
+        ignore_public_acls: true
+        restrict_public_buckets: true

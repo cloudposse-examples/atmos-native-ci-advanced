@@ -14,7 +14,7 @@ permissions:
   statuses: write
 
 env:
-  ATMOS_PROFILE: github 
+  ATMOS_PROFILE: github
 
 jobs:
   test:
@@ -29,25 +29,26 @@ jobs:
         with:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.mod
-          
+
       - name: Run tests
         working-directory: app
         run: go test -v ./...
 
   build:
     runs-on: ["ubuntu-latest"]
+    container:
+      image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Install Atmos
-        uses: cloudposse/github-action-setup-atmos@v3
-        with:
-          install-wrapper: false
-          atmos-version: ${{ vars.ATMOS_VERSION }}
+      - name: Install Docker CLI
+        run: apt-get update && apt-get install -y docker.io bc
 
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: AWS Auth
-        shell: bash
         run: |
           atmos auth env --identity plat-dev/terraform --format dotenv | tr -d "'" >> $GITHUB_ENV
           atmos auth login --identity plat-dev/terraform
@@ -65,15 +66,41 @@ jobs:
       image: ${{ steps.build.outputs.image }}
       tag: ${{ steps.build.outputs.tag }}
 
-  deploy:
-    needs: [ test, build ]
+  affected:
+    needs: [ test ]
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'deploy') }}
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'deploy') }}
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Trust Workspace
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+
+      - name: Describe Affected
+        id: affected
+        run: atmos describe affected --format=matrix --output-file=$GITHUB_OUTPUT
+
+  deploy:
+    needs: [ affected, build ]
+    if: ${{ needs.affected.outputs.matrix != '' }}
+    runs-on: ["ubuntu-latest"]
+    container:
+      image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    strategy:
+      matrix: ${{ fromJson(needs.affected.outputs.matrix) }}
+      fail-fast: false
     environment:
       name: preview
-      url: ${{ steps.deploy.outputs.output_url }}
     defaults:
       run:
         shell: bash
@@ -81,12 +108,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Deploy ECS Service
+      - name: Deploy
         id: deploy
         env:
-          ATMOS_PROFILE: github
           APP_IMAGE: "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          atmos terraform deploy app -s preview
+          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}
