@@ -96,8 +96,11 @@ jobs:
         id: deploy
         env:
           APP_IMAGE: "${{ needs.promote.outputs.image }}:${{ needs.promote.outputs.tag }}"
+          COMPONENT: ${{ matrix.component }}
+          STACK: ${{ matrix.stack }}
         run: |
-          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}
+          atmos terraform deploy "${COMPONENT}" -s "${STACK}"
+          atmos terraform output "${COMPONENT}" -s "${STACK}" --skip-init --format=github
 
   affected-prod:
     needs: [ deploy-staging ]
@@ -147,5 +150,8 @@ jobs:
         id: deploy
         env:
           APP_IMAGE: "${{ needs.promote.outputs.image }}:${{ needs.promote.outputs.tag }}"
+          COMPONENT: ${{ matrix.component }}
+          STACK: ${{ matrix.stack }}
         run: |
-          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}
+          atmos terraform deploy "${COMPONENT}" -s "${STACK}"
+          atmos terraform output "${COMPONENT}" -s "${STACK}" --skip-init --format=github

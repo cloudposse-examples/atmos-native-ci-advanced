@@ -109,8 +109,10 @@ jobs:
         env:
           APP_IMAGE: "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMPONENT: ${{ matrix.component }}
+          STACK: ${{ matrix.stack }}
         run: |
-          atmos terraform plan ${{ matrix.component }} -s ${{ matrix.stack }}
+          atmos terraform plan "${COMPONENT}" -s "${STACK}"
 
   deploy:
     needs: [ test, build ]
@@ -138,5 +140,8 @@ jobs:
           APP_IMAGE: "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPONENT: ${{ matrix.component }}
+          STACK: preview
         run: |
-          atmos terraform deploy ${{ matrix.component }} -s preview
+          atmos terraform deploy "${COMPONENT}" -s "${STACK}"
+          atmos terraform output "${COMPONENT}" -s "${STACK}" --skip-init --format=github
