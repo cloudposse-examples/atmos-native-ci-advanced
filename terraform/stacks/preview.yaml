@@ -28,3 +28,6 @@ components:
     s3-bucket:
       metadata:
         terraform_workspace: '{{ .vars.github_repo_name }}-{{ .atmos_stack }}-{{ .atmos_component }}-{{ env "PR_NUMBER" | default "0" }}'
+      vars:
+        attributes:
+          - '{{ env "PR_NUMBER" | default "0" }}'
