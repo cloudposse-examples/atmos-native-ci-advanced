@@ -85,14 +85,7 @@ jobs:
 
       - name: Describe Affected
         id: affected
-        run: |
-          MATRIX=$(atmos describe affected --format=matrix 2>/dev/null || echo '{"include":[]}')
-          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
-          if [ "$MATRIX" = '{"include":[]}' ] || [ -z "$MATRIX" ]; then
-            echo "has_affected=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_affected=true" >> $GITHUB_OUTPUT
-          fi
+        run: atmos describe affected --format=matrix --output-file=$GITHUB_OUTPUT
 
   deploy:
     needs: [ affected, build ]
