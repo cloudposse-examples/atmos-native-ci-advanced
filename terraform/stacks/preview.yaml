@@ -1,6 +1,7 @@
 import:
   - _default.yaml
   - defaults/app.yaml
+  - defaults/s3-bucket.yaml
   - deps/*
 
 vars:
@@ -24,3 +25,6 @@ components:
           - '{{ env "PR_NUMBER" | default "0" }}'
         service:
           enable_execute_command: true
+    s3-bucket:
+      metadata:
+        terraform_workspace: '{{ .vars.github_repo_name }}-{{ .atmos_stack }}-{{ .atmos_component }}-{{ env "PR_NUMBER" | default "0" }}'

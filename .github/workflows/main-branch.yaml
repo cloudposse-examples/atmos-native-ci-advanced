@@ -63,15 +63,46 @@ jobs:
     outputs:
       image: ${{ steps.build.outputs.image }}
       tag: ${{ steps.build.outputs.tag }}
-      
-  deploy:
-    needs: [ test, build ]
+
+  affected:
+    needs: [ test ]
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      has_affected: ${{ steps.affected.outputs.has_affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Describe Affected
+        id: affected
+        run: |
+          MATRIX=$(atmos describe affected --format=matrix 2>/dev/null || echo '{"include":[]}')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          if [ "$MATRIX" = '{"include":[]}' ] || [ -z "$MATRIX" ]; then
+            echo "has_affected=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_affected=true" >> $GITHUB_OUTPUT
+          fi
+
+  deploy:
+    needs: [ affected, build ]
+    if: ${{ needs.affected.outputs.has_affected == 'true' }}
+    runs-on: ["ubuntu-latest"]
+    container:
+      image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    strategy:
+      matrix: ${{ fromJson(needs.affected.outputs.matrix) }}
+      fail-fast: false
     environment:
       name: dev
-      url: ${{ steps.deploy.outputs.output_url }}
     defaults:
       run:
         shell: bash
@@ -79,17 +110,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Deploy ECS Service
+      - name: Deploy
         id: deploy
         env:
-          ATMOS_PROFILE: github
           APP_IMAGE: "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
         run: |
-          atmos terraform deploy app -s dev
+          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}
 
   release:
     runs-on: ["ubuntu-latest"]
-    needs: [ deploy ]
+    needs: [ affected, deploy ]
+    if: ${{ always() && needs.affected.result == 'success' && needs.deploy.result != 'failure' }}
     steps:
       - name: Create/Update Draft release
         uses: release-drafter/release-drafter@v7

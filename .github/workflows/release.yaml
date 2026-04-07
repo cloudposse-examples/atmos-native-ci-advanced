@@ -43,44 +43,51 @@ jobs:
           from: sha-${{ github.sha }}
           to: ${{ github.event.release.tag_name }}
           use_metadata: false
-  
+
     outputs:
       image: ${{ steps.promote.outputs.image }}
       tag: ${{ steps.promote.outputs.tag }}
-      
-  deploy-staging:
+
+  affected-staging:
     needs: [ promote ]
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
-    name: deploy / staging
-    environment:
-      name: staging
-      url: ${{ steps.deploy.outputs.url }}
     defaults:
       run:
         shell: bash
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      has_affected: ${{ steps.affected.outputs.has_affected }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Deploy ECS Service
-        id: deploy
-        env:
-          ATMOS_PROFILE: github
-          APP_IMAGE: "${{ needs.promote.outputs.image }}:${{ needs.promote.outputs.tag }}"
+      - name: Describe Affected
+        id: affected
         run: |
-          atmos terraform deploy app -s staging
+          MATRIX=$(atmos describe affected --format=matrix 2>/dev/null || echo '{"include":[]}')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          if [ "$MATRIX" = '{"include":[]}' ] || [ -z "$MATRIX" ]; then
+            echo "has_affected=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_affected=true" >> $GITHUB_OUTPUT
+          fi
 
-  deploy-production:
-    needs: [ deploy-staging, promote ]
+  deploy-staging:
+    needs: [ affected-staging, promote ]
+    if: ${{ needs.affected-staging.outputs.has_affected == 'true' }}
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
-    name: deploy / production
+    strategy:
+      matrix: ${{ fromJson(needs.affected-staging.outputs.matrix) }}
+      fail-fast: false
+    name: deploy / staging / ${{ matrix.component }}
     environment:
-      name: prod
-      url: ${{ steps.deploy.outputs.url }}
+      name: staging
     defaults:
       run:
         shell: bash
@@ -88,11 +95,64 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Deploy ECS Service
+      - name: Deploy
         id: deploy
         env:
-          ATMOS_PROFILE: github
           APP_IMAGE: "${{ needs.promote.outputs.image }}:${{ needs.promote.outputs.tag }}"
         run: |
-          atmos terraform deploy app -s prod
-          
+          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}
+
+  affected-prod:
+    needs: [ deploy-staging ]
+    if: ${{ always() && needs.deploy-staging.result != 'failure' }}
+    runs-on: ["ubuntu-latest"]
+    container:
+      image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      has_affected: ${{ steps.affected.outputs.has_affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Describe Affected
+        id: affected
+        run: |
+          MATRIX=$(atmos describe affected --format=matrix 2>/dev/null || echo '{"include":[]}')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          if [ "$MATRIX" = '{"include":[]}' ] || [ -z "$MATRIX" ]; then
+            echo "has_affected=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_affected=true" >> $GITHUB_OUTPUT
+          fi
+
+  deploy-production:
+    needs: [ affected-prod, promote ]
+    if: ${{ needs.affected-prod.outputs.has_affected == 'true' }}
+    runs-on: ["ubuntu-latest"]
+    container:
+      image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    strategy:
+      matrix: ${{ fromJson(needs.affected-prod.outputs.matrix) }}
+      fail-fast: false
+    name: deploy / production / ${{ matrix.component }}
+    environment:
+      name: prod
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Deploy
+        id: deploy
+        env:
+          APP_IMAGE: "${{ needs.promote.outputs.image }}:${{ needs.promote.outputs.tag }}"
+        run: |
+          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}

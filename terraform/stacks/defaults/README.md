@@ -2,7 +2,8 @@
 
 Shared configuration imported by all environment stacks.
 
-- `app.yaml` - Default container and task configuration for the application
+- `app.yaml` - Default container and task configuration for the ECS application (uses the local `ecs-task` component)
+- `s3-bucket.yaml` - S3 bucket configuration using [source provisioning](https://atmos.tools/core-concepts/components/source-provisioning) - the Terraform module is fetched just-in-time from `github.com/cloudposse/terraform-aws-s3-bucket` with workdir provisioning enabled, so no local component code is needed
 
 ## Brownfield Configuration
 
