@@ -68,7 +68,6 @@ jobs:
 
   affected:
     needs: [ test ]
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'deploy') }}
     runs-on: ["ubuntu-latest"]
     container:
       image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
@@ -90,7 +89,7 @@ jobs:
         id: affected
         run: atmos describe affected --format=matrix --output-file=$GITHUB_OUTPUT
 
-  deploy:
+  plan:
     needs: [ affected, build ]
     if: ${{ needs.affected.outputs.matrix != '' }}
     runs-on: ["ubuntu-latest"]
@@ -99,8 +98,35 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.affected.outputs.matrix) }}
       fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Plan
+        env:
+          APP_IMAGE: "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMPONENT: ${{ matrix.component }}
+          STACK: ${{ matrix.stack }}
+        run: |
+          atmos terraform plan "${COMPONENT}" -s "${STACK}"
+
+  deploy:
+    needs: [ test, build ]
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'deploy') }}
+    runs-on: ["ubuntu-latest"]
+    container:
+      image: ghcr.io/cloudposse/atmos:${{ vars.ATMOS_VERSION }}
+    strategy:
+      matrix:
+        component: [app, s3-bucket]
+      fail-fast: false
     environment:
       name: preview
+      url: ${{ steps.deploy.outputs.url }}
     defaults:
       run:
         shell: bash
@@ -114,5 +140,8 @@ jobs:
           APP_IMAGE: "${{ needs.build.outputs.image }}:${{ needs.build.outputs.tag }}"
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPONENT: ${{ matrix.component }}
+          STACK: preview
         run: |
-          atmos terraform deploy ${{ matrix.component }} -s ${{ matrix.stack }}
+          atmos terraform deploy "${COMPONENT}" -s "${STACK}"
+          atmos terraform output "${COMPONENT}" -s "${STACK}" --skip-init --format=github
