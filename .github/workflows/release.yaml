@@ -84,6 +84,7 @@ jobs:
     name: deploy / staging / ${{ matrix.component }}
     environment:
       name: staging
+      url: ${{ steps.deploy.outputs.url }}
     defaults:
       run:
         shell: bash
@@ -134,6 +135,7 @@ jobs:
     name: deploy / production / ${{ matrix.component }}
     environment:
       name: prod
+      url: ${{ steps.deploy.outputs.url }}
     defaults:
       run:
         shell: bash
